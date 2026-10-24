@@ -205,7 +205,7 @@ const world = {
     let g = this.ground(x), plat = null;
     for (const p of this.props) {
       if (!p.platform || p === ignore || p.dead) continue;
-      const s = p.surface(x); if (s == null) continue;
+      const s = p.surface(x, fromY); if (s == null) continue;
       if (s >= fromY - 6 && s < g) { g = s; plat = p; }
     }
     return { y: g, plat };
@@ -1468,7 +1468,7 @@ class Tank extends Prop {
   constructor(o) { super(Object.assign({ z: 6, dir: 1, turret: 0, tv: 0, hatch: 0, solid: true, platform: true, treadA: 0, recoil: 0 }, o)); }
   hit(px, py) { const lx = px - this.x; return (Math.abs(lx) < 140 && py > -66 && py < 0) || (Math.abs(lx) < 60 && py > -106 && py < -60); }
   onHit(p, hx, hy) { super.onHit(p, hx, hy); SFX.metal(hx, .3); }
-  surface(x) { const lx = x - this.x; if (Math.abs(lx) < 52) return -108; if (Math.abs(lx) < 135) return -68; return null; }
+  surface(x, fy = -1e9) { const lx = x - this.x; if (Math.abs(lx) < 52 && fy <= -100) return -108; if (Math.abs(lx) < 135) return -68; return null; }
   muzzle() { const a = this.turret * D2R, L = 150 - this.recoil * 20; return { x: this.x + this.dir * (30 + Math.cos(a) * L), y: -88 - Math.sin(a) * L, a: this.dir > 0 ? -a : Math.PI + a }; }
   fire(o = {}) {
     const m = this.muzzle(), sp = o.speed || 1300;
@@ -1521,7 +1521,7 @@ class Crates extends Prop {
   hit(px, py) { return !this.broken && px > this.x && px < this.x + 70 && py > -70 * this.n && py < 0; }
   collideChar(c) {
     if (this.broken) return false;
-    if (c.x > this.x - 10 && c.x < this.x + 80 && c.y > -70 * this.n) {
+    if (c.x > this.x - 10 && c.x < this.x + 80 && c.y > -70 * this.n - 60) {
       this.broken = true; debris(this.x + 35, -70, 26, '#b9a888', 500, 7); dust(this.x + 35, 0, 16, 2); SFX.crash(this.x); SFX.hit(this.x, true); cam.shake(.6); hitstop(.08); impact(c.x, c.y - 40, 30);
       c.vx *= .25; return true;
     }
@@ -1589,7 +1589,7 @@ defMove('flinch', { dur: .35, k: 700, keys: [[.05, { tr: 50, hd: 30, aN: 120, fN
 defMove('peek', { dur: .6, k: 400, keys: [[.25, { tr: 10, hd: -10, lN: 60, kN: 90, lF: 10, kF: 90 }], [.6, { tr: 8 }]] });
 defMove('pickArrow', { dur: .45, k: 600, keys: [[.18, { aN: 175, fN: 120, hd: 10 }], [.45, { aN: 30, fN: 120 }]] });
 defMove('elbow', { dur: .36, k: 760, z: .5, hit: .12, trail: .3, keys: [[.06, { tr: 4, aN: 30, fN: 150 }], [.12, { tr: 36, hd: -14, aN: 98, fN: 160, lN: 48, kN: 42 }], [.28, { tr: 24 }]] });
-defMove('flyKick', { dur: .72, k: 650, z: .55, hit: .3, trail: .5, keys: [[.1, { tr: 14, lN: 92, kN: 135, lF: 40, kF: 120, aN: 60, fN: 90, aF: 80, fF: 90 }], [.3, { tr: -32, hd: -6, lN: 96, kN: 0, lF: -25, kF: 95, aN: -25, fN: 40, aF: 125, fF: 60 }], [.55, { tr: 4, lN: 60, kN: 60 }]], ev: [[.07, c => { c.jump(c.dir * 300, -470); SFX.whoosh(c.x, .2); }]] });
+defMove('flyKick', { dur: .72, k: 650, z: .55, hit: .3, trail: .5, keys: [[.1, { tr: 14, lN: 92, kN: 135, lF: 40, kF: 120, aN: 60, fN: 90, aF: 80, fF: 90 }], [.3, { tr: -32, hd: -6, lN: 96, kN: 0, lF: -25, kF: 95, aN: -25, fN: 40, aF: 125, fF: 60 }], [.55, { tr: 4, lN: 60, kN: 60 }]], ev: [[.07, c => { c.jump(c.dir * 150, -470); SFX.whoosh(c.x, .2); }]] });
 defMove('sweep', { dur: .8, k: 680, z: .55, hit: .34, trail: .55, keys: [[.12, { tr: 42, hd: -22, lN: 102, kN: 142, lF: 20, kF: 122, aN: -30, fN: 20, aF: 25, fF: 30 }], [.22, { yaw: 120 }], [.34, { yaw: 180, lF: -96, kF: 0, tr: 52 }], [.52, { yaw: 300 }], [.66, { yaw: 360, lF: 22, kF: 120 }]] });
 defMove('tuck', { dur: .6, k: 700, keys: [[.1, { lN: 122, kN: 150, lF: 112, kF: 150, tr: 28, aN: 70, fN: 90, aF: 80, fF: 90 }], [.42, { lN: 115 }]], ev: [[.03, c => { c.jump(c.dir * -40, -560); SFX.whoosh(c.x, .15); }]] });
 defMove('axeKick', { dur: .72, k: 600, z: .5, hit: .4, trail: .5, keys: [[.26, { tr: -16, hd: -8, lN: 168, kN: 0, aN: -25, aF: 60 }], [.4, { tr: 26, lN: 42, kN: 0 }], [.56, { lN: 32, kN: 22 }]] });
@@ -1879,17 +1879,22 @@ SCENES.push({
     tl.at(11.3, () => { red.ik.N = red.ik.F = null; red.weapon = null; red.hold = null; red.aimAt = null; jumpOnto(red, truck, 100, .55); red.base = 'fall'; SFX.whoosh(red.x, .3); moto.driver = null; moto.air = true; moto.vy = -150; moto.vr = -5; moto.vx = 620; });
     tl.at(11.9, () => { red.base = 'stance'; red.foe = blue; blue.foe = red; red.range = blue.range = 56; fightCam(red, blue, { maxZ: 2.6 }); SFX.loopSet('engine', 60, .05); });
     // fight on the trailer roof (wind in the scarves)
-    tl.at(12.3, () => attack(red, blue, 'jab', 'block'));
-    tl.at(12.65, () => attack(blue, red, 'cross', 'head'));
-    tl.at(13.05, () => attack(red, blue, 'kick', 'gut', { push: 200 }));
-    tl.at(13.55, () => attack(blue, red, 'highKick', 'block'));
+    tl.at(12.15, () => attack(red, blue, 'jab', 'block'));
+    tl.at(12.38, () => attack(red, blue, 'cross', 'head'));
+    tl.at(12.62, () => attack(blue, red, 'elbow', 'head'));
+    tl.at(12.88, () => attack(blue, red, 'kneeUp', 'gut'));
+    tl.at(13.12, () => { blue.play('jab'); red.play('slip'); SFX.whoosh(blue.x, .15); });
+    tl.at(13.36, () => attack(red, blue, 'upper', 'head', { heavy: true, push: 200 }));
+    tl.at(13.7, () => attack(blue, red, 'flyKick', 'block', { push: 230 }));
     tl.at(14.0, () => { cam.follow([red, blue, gantry], { pad: 160, minZ: .6, maxZ: 1.1, dy: -150, smooth: 3 }); });
     tl.at(14.35, () => { red.play('duck'); blue.play('duck'); });
     tl.at(14.62, () => { SFX.whoosh(gantry.x, .5); cam.shake(.3); });
     tl.at(15.0, () => fightCam(red, blue, { maxZ: 2.6 }));
-    tl.at(15.1, () => attack(blue, red, 'upper', 'head'));
-    tl.at(15.6, () => attack(red, blue, 'cross', 'head', { push: 120 }));
-    tl.at(16.0, () => { red.foe = null; attack(blue, red, 'spinKick', 'launch', { vx: 90, vy: -380, spin: -420, imp: .25 }); });
+    tl.at(15.0, () => { red.play('sweep'); SFX.whoosh(red.x, .25); });
+    tl.at(15.15, () => { blue.play('tuck'); });
+    tl.at(15.5, () => attack(blue, red, 'axeKick', 'head', { heavy: true, push: 150 }));
+    tl.at(15.85, () => attack(red, blue, 'cross', 'head', { push: 120 }));
+    tl.at(16.1, () => { red.foe = null; attack(blue, red, 'spinKick', 'launch', { vx: 90, vy: -380, spin: -420, imp: .25 }); });
     tl.at(16.85, () => { red.getUp(true); });
     tl.at(17.2, () => { red.foe = blue; });
     tl.during(17.2, 18.4, (p) => { truck.rot = Math.sin(p * 30) * .012; });
@@ -2041,12 +2046,16 @@ SCENES.push({
     tl.at(24.6, () => { red.base = blue.base = 'stance'; red.foe = blue; blue.foe = red; red.range = blue.range = 64; fightCam(red, blue, { maxZ: 2.8 }); });
     // machete duel, drifting to the waterfall edge
     const duel = [
-      [24.9, blue, red, 'overhead', 'clang'], [25.35, red, blue, 'slash', 'clang', { push: 150 }], [25.75, red, blue, 'backslash', 'clang', { push: 170 }],
-      [26.2, blue, red, 'thrust', 'dodge'], [26.6, blue, red, 'slash', 'duck'], [26.95, red, blue, 'kick', 'gut', { push: 260 }],
-      [27.5, red, blue, 'overhead', 'clang', { push: 200 }], [27.95, blue, red, 'slash', 'clang'], [28.35, red, blue, 'slash', 'clang', { push: 160 }],
+      [24.9, blue, red, 'overhead', 'clang'], [25.2, red, blue, 'slash', 'clang', { push: 120 }], [25.45, red, blue, 'backslash', 'clang', { push: 140 }],
+      [25.7, red, blue, 'thrust', 'slip'], [25.95, blue, red, 'slash', 'duck'], [26.18, red, blue, 'kneeUp', 'gut', { push: 160 }],
+      [26.45, blue, red, 'elbow', 'head'], [26.7, red, blue, 'sweep', 'tuck'], [27.15, blue, red, 'overhead', 'clang', { push: 200, heavy: true }],
+      [27.55, red, blue, 'slash', 'clang'], [27.8, blue, red, 'backslash', 'clang'], [28.05, red, blue, 'overhead', 'clang', { push: 180 }],
+      [28.4, blue, red, 'thrust', 'dodge'],
     ];
     for (const [t, a, b, mv, kind, o] of duel) tl.at(t, () => {
       if (kind === 'dodge') { a.play(mv); b.play('dodgeBack'); SFX.slash(a.x); }
+      else if (kind === 'slip') { a.play(mv); b.play('slip'); SFX.slash(a.x); }
+      else if (kind === 'tuck') { a.play(mv); SFX.whoosh(a.x, .25); world.after(.15, () => b.play('tuck')); }
       else if (kind === 'duck') { a.play(mv); b.play('duck'); SFX.slash(a.x); }
       else attack(a, b, mv, kind, o || {});
     });
@@ -2197,11 +2206,14 @@ SCENES.push({
     tl.at(6.7, () => { blue.walkTo(770, 80, 'stance'); });
     tl.at(6.95, () => { red.hidden = false; tween(tank, { hatch: 1 }, .15); tween(red, { y: -108 }, .2, Ease.out, () => { red.scripted = false; red.grounded = true; red.base = 'stance'; }); SFX.metal(tank.x, .4); });
     tl.at(7.05, () => { red.face(1); attack(red, blue, 'upper', 'head', { push: 120 }); });
-    tl.at(7.5, () => { red.foe = blue; blue.foe = red; red.range = blue.range = 60; fightCam(red, blue, { maxZ: 2.7 }); });
-    tl.at(7.7, () => attack(red, blue, 'kick', 'block'));
-    tl.at(8.1, () => attack(blue, red, 'jab', 'head'));
-    tl.at(8.4, () => attack(blue, red, 'cross', 'head'));
-    tl.at(8.8, () => { red.foe = blue.foe = null; attack(blue, red, 'spinKick', 'launch', { heavy: true, vx: 640, vy: -380, spin: 520 }); });
+    tl.at(7.3, () => { red.foe = blue; blue.foe = red; red.range = blue.range = 60; fightCam(red, blue, { maxZ: 2.7 }); });
+    tl.at(7.35, () => { red.play('jab'); blue.play('slip'); SFX.whoosh(red.x, .15); });
+    tl.at(7.55, () => attack(blue, red, 'elbow', 'head'));
+    tl.at(7.8, () => attack(blue, red, 'kneeUp', 'gut'));
+    tl.at(8.05, () => attack(red, blue, 'axeKick', 'block', { push: 150 }));
+    tl.at(8.35, () => attack(red, blue, 'elbow', 'head'));
+    tl.at(8.55, () => attack(blue, red, 'upper', 'head', { heavy: true, push: 60 }));
+    tl.at(8.85, () => { red.foe = blue.foe = null; attack(blue, red, 'spinKick', 'launch', { heavy: true, vx: 760, vy: -110, spin: 480, imp: .4 }); });
     tl.at(9.0, () => cam.follow([red, blue, crates], { pad: 200, maxZ: 1.2, smooth: 2.5 }));
     tl.at(9.45, () => { blue.jumpTo(560, 0, .55); blue.base = 'fall'; });
     tl.at(10.0, () => { blue.base = 'stance'; blue.foe = red; fightCam(red, blue); });
