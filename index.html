@@ -126,8 +126,10 @@ const SFX = {
   land(x) { this.noise({ dur: .18, f: 500, g: .25, x }); this.tone({ f: 90, f2: 50, dur: .12, g: .2, x }); },
   whoosh(x, g = .14) { this.noise({ dur: .2, f: 500, f2: 1800, q: 2, type: 'bandpass', g, a: .07, x }); },
   hit(x, heavy) {
-    this.noise({ dur: heavy ? .22 : .12, f: 2200, f2: 300, g: heavy ? .8 : .55, x });
-    this.tone({ f: heavy ? 140 : 180, f2: 45, dur: heavy ? .25 : .14, g: heavy ? .6 : .4, x });
+    this.noise({ dur: heavy ? .22 : .12, f: 2600, f2: 300, g: heavy ? .85 : .6, x });
+    this.tone({ f: heavy ? 150 : 190, f2: 42, dur: heavy ? .32 : .16, g: heavy ? .75 : .5, x });
+    this.tone({ f: 62, f2: 38, dur: heavy ? .45 : .22, g: heavy ? .7 : .35, x });
+    this.noise({ dur: .04, f: 5000, type: 'highpass', g: heavy ? .5 : .3, x });
   },
   block(x) { this.noise({ dur: .08, f: 3000, type: 'highpass', g: .2, x }); this.tone({ f: 260, f2: 120, dur: .09, g: .3, x }); },
   gun(x) {
@@ -242,14 +244,15 @@ function flash(color = '#fff', dur = .25, a = 1) { world.flash = { color, dur, t
    3. CAMERA — follow, framing, zoom, shake
    ===================================================================== */
 const cam = {
-  x: 0, y: -200, zoom: 1, rot: 0, smooth: 3, zsmooth: 2, targets: null, o: {}, ov: null, trauma: 0, sx: 0, sy: 0, sr: 0, t: 0, prev: null,
+  x: 0, y: -200, zoom: 1, rot: 0, vx: 0, vy: 0, zk: 0, rk: 0, smooth: 3, zsmooth: 2, targets: null, o: {}, ov: null, trauma: 0, sx: 0, sy: 0, sr: 0, t: 0, prev: null,
   follow(targets, o = {}) {
     this.targets = targets; this.ov = null;
     this.o = Object.assign({ pad: 260, minZ: .55, maxZ: 1.7, zoom: null, dy: -70, dx: 0, comp: true }, o);
     if (o.smooth) this.smooth = o.smooth; if (o.zs) this.zsmooth = o.zs;
   },
   to(x, y, zoom, smooth = 3, zs) { this.ov = { x, y, zoom }; this.smooth = smooth; if (zs) this.zsmooth = zs; },
-  cut(x, y, zoom) { this.x = x; this.y = y; this.zoom = zoom; this.prev = null; },
+  cut(x, y, zoom) { this.x = x; this.y = y; this.zoom = zoom; this.prev = null; this.vx = this.vy = 0; },
+  kick(dx, z, r) { if (FF) return; this.vx += dx; this.zk = Math.min(.3, this.zk + z); this.rk += r; },
   shake(a) { if (!FF) this.trauma = Math.min(1.1, this.trauma + a); },
   aim() {
     if (this.ov) return this.ov;
@@ -270,24 +273,30 @@ const cam = {
     // lag compensation for fast-moving subjects (highway)
     if (!this.ov && this.o.comp && this.prev && dt > 0) {
       const vx = (tx - this.prev.x) / dt, vy = (ty - this.prev.y) / dt;
-      if (Math.abs(vx) < 4000) { tx += vx / this.smooth; ty += vy / this.smooth * .5; }
+      if (Math.abs(vx) < 4000) { tx += vx * 2 / (this.smooth * 1.25); ty += vy / this.smooth; }
     }
     this.prev = { x: a.x, y: a.y };
-    const k = 1 - Math.exp(-this.smooth * dt), kz = 1 - Math.exp(-this.zsmooth * dt);
-    this.x += (tx - this.x) * k; this.y += (ty - this.y) * k;
+    // critically-damped spring follow: weighty, never snappy
+    const w = this.smooth * 1.25, kz = 1 - Math.exp(-this.zsmooth * dt);
+    if (dt > 0) {
+      this.vx += (w * w * (tx - this.x) - 2 * w * this.vx) * dt; this.vy += (w * w * (ty - this.y) - 2 * w * this.vy) * dt;
+      this.x += this.vx * dt; this.y += this.vy * dt;
+    }
+    this.zk *= Math.exp(-6 * rdt); this.rk *= Math.exp(-4.5 * rdt);
     this.zoom = Math.exp(lerp(Math.log(this.zoom), Math.log(a.zoom), kz));
     this.trauma = Math.max(0, this.trauma - rdt * 1.4);
     const s = this.trauma * this.trauma;
-    this.sx = noise1(this.t * 23) * 26 * s; this.sy = noise1(this.t * 23 + 99) * 26 * s; this.sr = noise1(this.t * 17 + 50) * .03 * s;
+    this.sx = noise1(this.t * 23) * 26 * s + noise1(this.t * .6 + 7) * 3; this.sy = noise1(this.t * 23 + 99) * 26 * s + noise1(this.t * .5 + 31) * 2.5; this.sr = noise1(this.t * 17 + 50) * .03 * s + noise1(this.t * .4 + 3) * .004;
   },
   apply(ctx) {
-    ctx.translate(W / 2, H / 2); ctx.rotate(this.rot + this.sr); ctx.scale(this.zoom, this.zoom);
+    const z = this.zoom * (1 + this.zk);
+    ctx.translate(W / 2, H / 2); ctx.rotate(this.rot + this.sr + this.rk); ctx.scale(z, z);
     ctx.translate(-this.x - this.sx, -this.y - this.sy);
   },
   // parallax layer: factor f (0 = infinitely far, 1 = world)
   layer(ctx, f, fy = f) {
-    const z = 1 + (this.zoom - 1) * f;
-    ctx.translate(W / 2, H / 2); ctx.rotate(this.sr * f); ctx.scale(z, z);
+    const z = 1 + (this.zoom * (1 + this.zk) - 1) * f;
+    ctx.translate(W / 2, H / 2); ctx.rotate((this.sr + this.rk) * f); ctx.scale(z, z);
     ctx.translate(-(this.x + this.sx) * f, -(this.y + this.sy) * fy);
   },
   // visible world range in a layer
@@ -476,7 +485,7 @@ function shoot(x, y, ang, o = {}) {
    6. STICKMAN ENGINE — skeleton, pose springs, move library, IK
    ===================================================================== */
 const G = 1800; // gravity px/s²
-const BONE = { tor: 34, neck: 9, head: 9.5, ua: 19, fa: 19, th: 25, sh: 25 };
+const BONE = { tor: 34, neck: 9, head: 12.5, ua: 19, fa: 19, th: 25, sh: 25 };
 const PK = ['tr', 'hd', 'aN', 'fN', 'aF', 'fF', 'lN', 'kN', 'lF', 'kF', 'rot'];
 const STANCE = { tr: 14, hd: -10, aN: 38, fN: 112, aF: 58, fF: 122, lN: 30, kN: 32, lF: -22, kF: 22 };
 
@@ -609,6 +618,7 @@ const angOf = (dx, dy) => Math.atan2(dx, dy) * R2D; // angle from "down", + towa
 class Stick {
   constructor(name, color, x = 0, dir = 1) {
     this.name = name; this.color = color; this.seed = rnd(10);
+    const red = color === C.red; this.body = red ? '#8e2718' : '#4552a6'; this.bodyFar = red ? '#6b1b10' : '#323c82'; this.color = red ? '#e5503b' : '#6a96ff';
     this.x = x; this.y = 0; this.vx = 0; this.vy = 0; this.dir = dir; this.grounded = true;
     this.P = {}; this.V = {}; for (const k of PK) { this.P[k] = BASES.idle(this, 0)[k] || 0; this.V[k] = 0; }
     this.base = 'idle'; this.bt = 0; this.phase = 0; this.move = null; this.hold = null; this.weapon = null;
@@ -640,12 +650,93 @@ class Stick {
   }
   jump(vx, vy) { if (this.carrier) vx += this.carrier.vx || 0; this.grounded = false; this.carrier = null; this.vx = vx; this.vy = vy; return this; }
   jumpTo(tx, ty, T) { this.carrier = null; this.grounded = false; this.goal = null; this.vx = (tx - this.x) / T; this.vy = (ty - this.y - .5 * G * T * T) / T; return this; }
-  knock(vx, vy, spin = 0) {
+  knock(vx, vy, spin = 0, hit = null) {
+    this.fvx = this.carrier ? this.carrier.vx || 0 : 0;
     if (this.carrier) vx += this.carrier.vx || 0;
+    if (this.ride) { this.ride.driver = null; this.ownerDraw = false; }
     this.grounded = false; this.carrier = null; this.vx = vx; this.vy = vy; this.spin = spin; this.base = 'tumble'; this.move = null; this.goal = null;
-    this.knocked = true; this.anchor = null; this.ride = null; this.trailT = .6; this.hold = this.hold === 'carry' ? null : this.hold; return this;
+    this.knocked = true; this.anchor = null; this.ride = null; this.trailT = .6; this.hold = this.hold === 'carry' ? null : this.hold;
+    this.ik.N = this.ik.F = this.ik.fN = this.ik.fF = null;
+    this.startRag(vx, vy, spin, hit); return this;
   }
-  getUp(fast) { const r = this.P.rot; this.base = 'stance'; this.play(fast ? 'kipup' : (r > 0 ? 'getUpF' : 'getUpB')); return this; }
+  // ---------- ragdoll (position-based dynamics on the skeleton joints) ----------
+  startRag(vx, vy, spin, hit) {
+    const J = this.J, H2 = this.hist[2] || J, dt = Math.max(world.dt || 1 / 60, 1 / 240), w = spin * D2R * this.dir, P = {};
+    for (const k of RAGK) {
+      const rx = J[k][0] - J.hip[0], ry = J[k][1] - J.hip[1];
+      let jx = (rx - (H2[k][0] - H2.hip[0])) / (2 * dt) * .45, jy = (ry - (H2[k][1] - H2.hip[1])) / (2 * dt) * .45;
+      const jl = Math.hypot(jx, jy); if (jl > 700) { jx *= 700 / jl; jy *= 700 / jl; }
+      const p = { x: J[k][0], y: J[k][1], vx: vx - w * ry + jx, vy: vy + w * rx + jy, m: RAGM[k] };
+      if (hit) { const f = Math.exp(-((p.x - hit.x) ** 2 + (p.y - hit.y) ** 2) / (2 * 30 * 30)); p.vx += hit.vx * f; p.vy += hit.vy * f; }
+      P[k] = p;
+    }
+    const L = (a, b) => Math.hypot(J[a][0] - J[b][0], J[a][1] - J[b][1]);
+    this.rag = { p: P, t: 0, still: 0, fvx: this.fvx || 0, cons: RAGC.map(([a, b]) => [a, b, L(a, b)]) };
+  }
+  ragScale(f) { if (this.rag) for (const k in this.rag.p) { this.rag.p[k].vx *= f; } else this.vx *= f; }
+  ragStep(dt) {
+    const R = this.rag, P = R.p, d = this.dir;
+    if (dt > 0) {
+      R.t += dt; const damp = Math.exp(-.5 * dt);
+      for (const k of RAGK) { const p = P[k]; p.ox = p.x; p.oy = p.y; p.vy += G * dt; p.vx = R.fvx + (p.vx - R.fvx) * damp; p.vy *= damp; p.v0x = p.vx; p.v0y = p.vy; p.x += p.vx * dt; p.y += p.vy * dt; p.gd = null; }
+      for (let it = 0; it < 8; it++) {
+        for (const [a, b, l] of R.cons) {
+          const A = P[a], B = P[b], dx = B.x - A.x, dy = B.y - A.y, dd = Math.hypot(dx, dy) || 1e-3, wa = 1 / A.m, wb = 1 / B.m, f = (dd - l) / dd / (wa + wb);
+          A.x += dx * f * wa; A.y += dy * f * wa; B.x -= dx * f * wb; B.y -= dy * f * wb;
+        }
+        for (const [a, b, l] of RAGMIN) {
+          const A = P[a], B = P[b], dx = B.x - A.x, dy = B.y - A.y, dd = Math.hypot(dx, dy) || 1e-3; if (dd >= l) continue;
+          const f = (dd - l) / dd * .5; A.x += dx * f; A.y += dy * f; B.x -= dx * f; B.y -= dy * f;
+        }
+        // keep knees bending forward and elbows backward (relative to the torso)
+        const ux = P.nk.x - P.hip.x, uy = P.nk.y - P.hip.y, ul = Math.hypot(ux, uy) || 1, fx = -uy / ul * d, fy = ux / ul * d;
+        for (const [r, m, e, sgnK] of RAGJ) {
+          const Rr = P[r], M = P[m], E = P[e], lx = E.x - Rr.x, ly = E.y - Rr.y, ll = Math.hypot(lx, ly) || 1, nx = lx / ll, ny = ly / ll;
+          const vx = M.x - Rr.x, vy = M.y - Rr.y, par = vx * nx + vy * ny, px = vx - nx * par, py = vy - ny * par;
+          if ((px * fx + py * fy) * sgnK < -1.5) { M.x = Rr.x + nx * par - px * .6; M.y = Rr.y + ny * par - py * .6; }
+        }
+        for (const k of RAGK) {
+          const p = P[k], g = this.floor != null ? { y: this.floor, plat: null } : world.groundAt(p.x, p.oy - 3), r = k === 'hd' ? BONE.head * this.s * .8 : 4;
+          if (p.y > g.y - r) { p.y = g.y - r; p.gd = g; const pdx = g.plat ? g.plat.dx || 0 : 0; p.x = lerp(p.x, p.ox + pdx, .22); }
+        }
+      }
+      // constraint corrections may only change velocity a little (stable even at hit-stop timesteps)
+      for (const k of RAGK) {
+        const p = P[k], md = 380 + 4 / dt * 0;
+        p.vx = p.v0x + clamp((p.x - p.ox) / dt - p.v0x, -md, md); p.vy = p.v0y + clamp((p.y - p.oy) / dt - p.v0y, -md, md);
+        if (p.gd) { if (p.vy > 0) p.vy = 0; else if (p.vy > -80) p.vy = 0; p.vx = lerp(p.vx, p.gd.plat ? p.gd.plat.vx || 0 : 0, 1 - Math.exp(-6 * dt)); }
+      }
+    }
+    const hip = P.hip, bx = hip.x, bvx = hip.vx;
+    this.x = hip.x; this.y = hip.y + 46; this.vx = hip.vx; this.vy = hip.vy;
+    for (const pr of world.props) if (pr.stopper && !pr.dead && pr.collideChar(this, dt)) { const dvx = this.vx - bvx, dx = this.x - bx; for (const k of RAGK) { P[k].vx += dvx; P[k].x += dx; } break; }
+    const J = {}; for (const k of RAGK) J[k] = [P[k].x, P[k].y];
+    this.J = J; this.hx = hip.x; this.hy = hip.y; this.camX = hip.x; this.camY = hip.y;
+    if (dt > 0) {
+      const g = this.floor != null ? { y: this.floor, plat: null } : world.groundAt(hip.x, hip.oy - 3), pvx = g.plat ? g.plat.vx || 0 : 0;
+      let mx = 0; for (const k of RAGK) mx = Math.max(mx, Math.hypot(P[k].vx - pvx, P[k].vy));
+      if (hip.y > g.y - 34 && mx < 90) R.still += dt; else R.still = 0;
+      if (Math.abs(hip.vx - pvx) > 120 && hip.gd && Math.random() < .4) dust(hip.x, g.y, 1, .5);
+      if (!R.landed && (P.hd.gd || hip.gd || P.nk.gd) && R.t > .05) { R.landed = true; const v = Math.abs(hip.oy - hip.y) / dt; dust(hip.x, g.y, 10, 1.3); SFX.land(hip.x); if (v > 150) { SFX.hit(hip.x, true); cam.shake(.22); } }
+      if (R.still > .22 || (R.t > 5 && hip.gd)) this.endRag(g);
+    }
+  }
+  endRag(g) {
+    const J = this.J, d = this.dir, W = a => ((a % 360) + 540) % 360 - 180;
+    const fromDown = (a, b) => Math.atan2((J[b][0] - J[a][0]) * d, J[b][1] - J[a][1]) * R2D;
+    const rot = W(Math.atan2((J.nk[0] - J.hip[0]) * d, -(J.nk[1] - J.hip[1])) * R2D), pre = a => W(a + rot);
+    const P = this.P; P.rot = rot; P.tr = 0;
+    P.hd = W(Math.atan2((J.hd[0] - J.nk[0]) * d, -(J.hd[1] - J.nk[1])) * R2D - rot);
+    for (const s of ['N', 'F']) {
+      const A1 = pre(fromDown('sh', 'e' + s)), A2 = pre(fromDown('e' + s, 'h' + s)); P['a' + s] = A1; P['f' + s] = W(A2 - A1);
+      const L1 = pre(fromDown('hip', 'k' + s)), L2 = pre(fromDown('k' + s, 'f' + s)); P['l' + s] = L1; P['k' + s] = W(L1 - L2);
+    }
+    for (const k of PK) this.V[k] = 0;
+    this.lieRot = rot >= 0 ? 90 : -90; this.base = 'lie'; this.knocked = false; this.grounded = true; this.rag = null;
+    this.carrier = g.plat; this.x = J.hip[0]; this.y = g.y; this.vx = 0; this.vy = 0; this.hipOff = J.hip[1] - g.y; this.settleT = .25;
+    if (this.pendingUp) { const f = this.pendingUp === 2; this.pendingUp = 0; this.getUp(f); }
+  }
+  getUp(fast) { if (this.rag) { this.pendingUp = fast ? 2 : 1; return this; } const r = this.P.rot; this.base = 'stance'; this.play(fast ? 'kipup' : (r > 0 ? 'getUpF' : 'getUpB')); return this; }
   equip(w, h = null) { this.weapon = w; this.hold = h; return this; }
   hangFrom(pt, limb = 'hF', rot = 0, base = 'hang') { this.anchor = { pt, limb }; this.hangRot = rot; this.base = base; this.knocked = false; this.goal = null; this.grounded = false; return this; }
   release(vx = null, vy = null) { const v = this.lastV || { x: 0, y: 0 }; this.anchor = null; this.grounded = false; this.vx = vx != null ? vx : v.x; this.vy = vy != null ? vy : v.y; this.base = 'fall'; this.fallRot = 0; return this; }
@@ -728,6 +819,7 @@ class Stick {
   // ---------- per-frame update ----------
   update(dt) {
     this.bt += dt;
+    if (this.rag) { this.ragStep(dt); this.trailT -= dt; this.hist.unshift(this.J); if (this.hist.length > 9) this.hist.pop(); this.updateScarf(dt); return; }
     const px = this.x, py = this.y;
     if (this.anchor) { this.swingV += (-this.swingA * 30 - this.swingV * 2.2) * dt; this.swingA += this.swingV * dt; } else this.swingA = this.swingV = 0;
     this.physics(dt);
@@ -785,7 +877,7 @@ class Stick {
   fk(P) {
     const B = BONE, r = D2R, tr = P.tr * r;
     const hip = [0, 0], nk = [Math.sin(tr) * B.tor, -Math.cos(tr) * B.tor], sh = [Math.sin(tr) * (B.tor - 3), -Math.cos(tr) * (B.tor - 3)];
-    const ha = tr + P.hd * r, hd = [nk[0] + Math.sin(ha) * (B.neck + 4), nk[1] - Math.cos(ha) * (B.neck + 4)];
+    const ha = tr + P.hd * r, hd = [nk[0] + Math.sin(ha) * (B.neck + 6), nk[1] - Math.cos(ha) * (B.neck + 6)];
     const arm = (a, f) => { const A1 = tr + a * r, A2 = A1 + f * r; const e = [sh[0] + Math.sin(A1) * B.ua, sh[1] + Math.cos(A1) * B.ua]; return [e, [e[0] + Math.sin(A2) * B.fa, e[1] + Math.cos(A2) * B.fa]]; };
     const leg = (l, k) => { const L1 = l * r, L2 = (l - k) * r; const kn = [Math.sin(L1) * B.th, Math.cos(L1) * B.th]; return [kn, [kn[0] + Math.sin(L2) * B.sh, kn[1] + Math.cos(L2) * B.sh]]; };
     const [eN, hN] = arm(P.aN, P.fN), [eF, hF] = arm(P.aF, P.fF), [kN, fN] = leg(P.lN, P.kN), [kF, fF] = leg(P.lF, P.kF);
@@ -804,7 +896,7 @@ class Stick {
       hx = a.x - l[0] * xs * this.s; hy = a.y - l[1] * this.s; this.x = hx; this.y = hy + 46;
     } else if (this.grounded && !this.ride) {
       let my = -1e9; for (const k of ['fN', 'fF', 'kN', 'kF', 'hip', 'nk']) my = Math.max(my, L[k][1]); my = Math.max(my, L.hd[1] + BONE.head);
-      const tgt = -my; this.hipOff = dt === 0 ? tgt : lerp(this.hipOff, tgt, 1 - Math.exp(-22 * dt)); hy = this.y + this.hipOff * this.s;
+      const tgt = -my; this.settleT = Math.max(0, (this.settleT || 0) - dt); this.hipOff = dt === 0 ? tgt : lerp(this.hipOff, tgt, 1 - Math.exp(-(this.settleT > 0 ? 6 : 22) * dt)); hy = this.y + this.hipOff * this.s;
     } else if (this.ride) { hy = this.y; }
     else { this.hipOff = lerp(this.hipOff, -46, 1 - Math.exp(-8 * dt)); hy = this.y + this.hipOff * this.s; }
     // IK: blend limbs toward world targets
@@ -853,31 +945,43 @@ class Stick {
   // ---------- rendering ----------
   draw(ctx) {
     if (this.hidden) return;
-    if (this.trailT > 0 && this.hist.length > 6) {
-      for (const [i, a] of [[6, .07], [4, .12], [2, .2]]) this.drawSkel(ctx, this.hist[i], a * Math.min(1, this.trailT * 4) * this.alpha, true);
-    }
+    this.drawSmears(ctx);
     this.drawSkel(ctx, this.J, this.alpha, false);
+  }
+  // smear arcs: tapered trails behind fast hands/feet (measured relative to the hip)
+  drawSmears(ctx) {
+    const Hs = this.hist; if (Hs.length < 6 || !this.J) return;
+    const lw = 12.5 * this.s, n = Math.min(Hs.length, 9), h0 = Hs[0].hip;
+    ctx.save(); ctx.lineCap = 'round';
+    for (const k of ['fF', 'hF', 'fN', 'hN']) {
+      const pts = []; for (let i = 0; i < n; i++) { const J = Hs[i]; pts.push([J[k][0] - J.hip[0] + h0[0], J[k][1] - J.hip[1] + h0[1]]); }
+      const sp = Math.hypot(pts[0][0] - pts[2][0], pts[0][1] - pts[2][1]); if (sp < 15) continue;
+      const a = clamp((sp - 15) / 25, 0, 1);
+      ctx.strokeStyle = k[1] === 'F' ? this.bodyFar : this.body;
+      for (let i = 0; i < n - 1; i++) { const u = i / (n - 1); ctx.globalAlpha = this.alpha * a * .5 * (1 - u); ctx.lineWidth = lw * (1 - u * .8); ctx.beginPath(); ctx.moveTo(pts[i][0], pts[i][1]); ctx.lineTo(pts[i + 1][0], pts[i + 1][1]); ctx.stroke(); }
+    }
+    ctx.restore();
   }
   drawSkel(ctx, J, alpha, ghost) {
     if (!J) return;
-    const s = this.s, lw = 6.2 * s;
+    const s = this.s, lw = 12.5 * s;
     ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     const ln = (pts, col, w) => { ctx.strokeStyle = col; ctx.lineWidth = w; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]); ctx.stroke(); };
-    const ink = ghost ? '#777' : C.ink, far = ghost ? '#888' : C.far;
+    const ink = this.body, far = this.bodyFar;
     if (!ghost && this.weapon === 'bow') this.drawBow(ctx, J);
     ln([J.sh, J.eF, J.hF], far, lw * .92);
     ln([J.hip, J.kF, J.fF], far, lw * .92);
     // scarf tail (behind body)
     if (!ghost && this.scarf.length) {
       ctx.strokeStyle = this.color;
-      for (let i = 1; i < this.scarf.length; i++) { ctx.lineWidth = (5.2 - i * .45) * s; ctx.beginPath(); ctx.moveTo(this.scarf[i - 1][0], this.scarf[i - 1][1]); ctx.lineTo(this.scarf[i][0], this.scarf[i][1]); ctx.stroke(); }
+      for (let i = 1; i < this.scarf.length; i++) { ctx.lineWidth = (6.5 - i * .6) * s; ctx.beginPath(); ctx.moveTo(this.scarf[i - 1][0], this.scarf[i - 1][1]); ctx.lineTo(this.scarf[i][0], this.scarf[i][1]); ctx.stroke(); }
     }
-    ln([J.nk, J.hip], ink, lw * 1.05);
+    ln([J.nk, J.hip], ink, lw * 1.12);
     ln([J.hip, J.kN, J.fN], ink, lw);
     ctx.fillStyle = ink; ctx.beginPath(); ctx.arc(J.hd[0], J.hd[1], BONE.head * s, 0, TAU); ctx.fill();
     if (!ghost) { // scarf wrap
-      ctx.strokeStyle = this.color; ctx.lineWidth = 6 * s; ctx.beginPath();
-      const nx = J.nk[0], ny = J.nk[1]; ctx.moveTo(nx - 5 * s, ny + 1); ctx.lineTo(nx + 5 * s, ny - 1); ctx.stroke();
+      ctx.strokeStyle = this.color; ctx.lineWidth = 7 * s; ctx.beginPath();
+      const nx = J.nk[0] * .85 + J.sh[0] * .15, ny = J.nk[1] * .85 + J.sh[1] * .15 + 2; ctx.moveTo(nx - 7 * s, ny + 1); ctx.lineTo(nx + 7 * s, ny - 1); ctx.stroke();
     }
     if (!ghost && this.camo > 0) {
       ctx.globalAlpha = alpha * this.camo;
@@ -926,14 +1030,23 @@ function strike(att, vic, kind = 'head', o = {}) {
   const d = att.dir;
   if (kind === 'block') { vic.play('block'); vic.vx += d * (o.push || 140); impact(hx, hy, 12); SFX.block(hx); sparks(hx, hy, 4, d > 0 ? 0 : Math.PI, .8, 200, '#fff'); return; }
   if (kind === 'clang') { sparks(hx, hy - 10, 14, -Math.PI / 2, 1.5, 520); SFX.clang(hx); vic.play('parry'); vic.vx += d * (o.push || 100); impact(hx, hy - 10, 14); hitstop(.05); return; }
-  impact(hx, hy, o.heavy ? 26 : 18); SFX.hit(hx, o.heavy);
-  cam.shake(o.heavy ? .32 : .14);
-  if (o.heavy) hitstop(.07);
-  if (kind === 'launch') { vic.knock(d * (o.vx || 520), o.vy != null ? o.vy : -420, d * (o.spin != null ? o.spin : -540)); dust(vic.x, vic.y, 6); return; }
-  vic.play(kind === 'gut' || kind === 'kick' ? 'hitGut' : 'hitHead'); vic.vx += d * (o.push || 170);
+  const heavy = o.heavy || kind === 'launch';
+  impact(hx, hy, heavy ? 34 : 22); SFX.hit(hx, heavy);
+  cam.shake(heavy ? .34 : .16); cam.kick(d * (heavy ? 260 : 120), heavy ? .1 : .045, d * (heavy ? .03 : .012));
+  hitstop(heavy ? .12 : .055); att.vx += d * 80;
+  for (let i = 0; i < (heavy ? 7 : 4); i++) FX.add({ t: 'spark', x: hx, y: hy, vx: d * rnd(200, 700), vy: rnd(-300, 200), drag: .9, life: rnd(.08, .18), c: '#fff', w: 3, bounce: -1 });
+  if (kind === 'launch') { vic.knock(d * (o.vx || 520), o.vy != null ? o.vy : -420, d * (o.spin != null ? o.spin : -540), { x: hx, y: hy, vx: d * 380 * (o.imp != null ? o.imp : 1), vy: -120 * (o.imp != null ? o.imp : 1) }); dust(vic.x, vic.y, 8); return; }
+  vic.play(kind === 'gut' || kind === 'kick' ? 'hitGut' : 'hitHead'); vic.vx += d * (o.push || 230); dust(vic.x, vic.y, 3, .6);
+  if (kind === 'gut' || kind === 'kick') { vic.V.tr += 420; vic.V.hd += 400; } else { vic.V.tr -= 320; vic.V.hd -= 800; }
   if (vic.anchor) vic.swingV += d * vic.dir * (o.heavy ? 260 : 150);
 }
 function attack(att, vic, move, kind, o = {}) { att.play(move, { onHit: () => strike(att, vic, kind, o) }); }
+
+const RAGK = ['hip', 'sh', 'nk', 'hd', 'eN', 'hN', 'eF', 'hF', 'kN', 'fN', 'kF', 'fF'];
+const RAGM = { hip: 3, sh: 2, nk: 1.6, hd: 1.4, eN: .6, hN: .5, eF: .6, hF: .5, kN: .9, fN: .7, kF: .9, fF: .7 };
+const RAGC = [['hip', 'sh'], ['sh', 'nk'], ['nk', 'hd'], ['hip', 'nk'], ['hip', 'hd'], ['sh', 'hd'], ['sh', 'eN'], ['eN', 'hN'], ['sh', 'eF'], ['eF', 'hF'], ['hip', 'kN'], ['kN', 'fN'], ['hip', 'kF'], ['kF', 'fF']];
+const RAGMIN = [['sh', 'hN', 16], ['sh', 'hF', 16], ['hip', 'fN', 26], ['hip', 'fF', 26], ['hd', 'hip', 40]];
+const RAGJ = [['hip', 'kN', 'fN', 1], ['hip', 'kF', 'fF', 1], ['sh', 'eN', 'hN', -1], ['sh', 'eF', 'hF', -1]];
 /* =====================================================================
    7. PROPS — interactive environment entities
    ===================================================================== */
@@ -1007,8 +1120,8 @@ class Lamppost extends Prop {
   hit(px, py) { return Math.abs(px - this.x) < 5 && py > -this.h && py < 0; }
   collideChar(c) {
     const hx = c.J ? c.J.hip[0] : c.x;
-    if (Math.abs(hx - this.x) < 16 && sgn(c.vx) === sgn(this.x - c.x) && Math.abs(c.vx) > 150 && c.y > -this.h) {
-      c.x = this.x - sgn(c.vx) * 14; const v = c.vx; c.vx = -v * .12; c.vy = Math.min(c.vy, -60); c.spin = -c.spin * .3;
+    if (Math.abs(hx - this.x) < 20 && sgn(c.vx) === sgn(this.x - hx) && Math.abs(c.vx) > 150 && c.y > -this.h) {
+      c.x = this.x - sgn(c.vx) * 14; const v = c.vx; c.vx = -v * .04; c.vy = Math.min(c.vy, -60); c.spin = -c.spin * .3;
       this.bv += v * .0009; this.flick = 1.2; impact(this.x, c.J.nk[1] + 10, 30); sparks(this.x, -this.h + 10, 18, Math.PI / 2, 1.4, 300);
       SFX.metal(this.x, .5); SFX.hit(this.x, true); cam.shake(.6); hitstop(.09); return true;
     }
@@ -1475,12 +1588,20 @@ defMove('reload', { dur: .9, k: 500, keys: [[.15, { aN: 40, fN: 100, aF: 52, fF:
 defMove('flinch', { dur: .35, k: 700, keys: [[.05, { tr: 50, hd: 30, aN: 120, fN: 120, aF: 130, fF: 120 }], [.25, { tr: 45 }]] });
 defMove('peek', { dur: .6, k: 400, keys: [[.25, { tr: 10, hd: -10, lN: 60, kN: 90, lF: 10, kF: 90 }], [.6, { tr: 8 }]] });
 defMove('pickArrow', { dur: .45, k: 600, keys: [[.18, { aN: 175, fN: 120, hd: 10 }], [.45, { aN: 30, fN: 120 }]] });
+defMove('elbow', { dur: .36, k: 760, z: .5, hit: .12, trail: .3, keys: [[.06, { tr: 4, aN: 30, fN: 150 }], [.12, { tr: 36, hd: -14, aN: 98, fN: 160, lN: 48, kN: 42 }], [.28, { tr: 24 }]] });
+defMove('flyKick', { dur: .72, k: 650, z: .55, hit: .3, trail: .5, keys: [[.1, { tr: 14, lN: 92, kN: 135, lF: 40, kF: 120, aN: 60, fN: 90, aF: 80, fF: 90 }], [.3, { tr: -32, hd: -6, lN: 96, kN: 0, lF: -25, kF: 95, aN: -25, fN: 40, aF: 125, fF: 60 }], [.55, { tr: 4, lN: 60, kN: 60 }]], ev: [[.07, c => { c.jump(c.dir * 300, -470); SFX.whoosh(c.x, .2); }]] });
+defMove('sweep', { dur: .8, k: 680, z: .55, hit: .34, trail: .55, keys: [[.12, { tr: 42, hd: -22, lN: 102, kN: 142, lF: 20, kF: 122, aN: -30, fN: 20, aF: 25, fF: 30 }], [.22, { yaw: 120 }], [.34, { yaw: 180, lF: -96, kF: 0, tr: 52 }], [.52, { yaw: 300 }], [.66, { yaw: 360, lF: 22, kF: 120 }]] });
+defMove('tuck', { dur: .6, k: 700, keys: [[.1, { lN: 122, kN: 150, lF: 112, kF: 150, tr: 28, aN: 70, fN: 90, aF: 80, fF: 90 }], [.42, { lN: 115 }]], ev: [[.03, c => { c.jump(c.dir * -40, -560); SFX.whoosh(c.x, .15); }]] });
+defMove('axeKick', { dur: .72, k: 600, z: .5, hit: .4, trail: .5, keys: [[.26, { tr: -16, hd: -8, lN: 168, kN: 0, aN: -25, aF: 60 }], [.4, { tr: 26, lN: 42, kN: 0 }], [.56, { lN: 32, kN: 22 }]] });
+defMove('slip', { dur: .4, k: 700, keys: [[.07, { tr: -30, hd: 20, kN: 50, kF: 40, aN: 50, fN: 130, aF: 70, fF: 130 }], [.25, { tr: -26 }]] });
 defMove('hitDrive', { dur: .5, k: 500, keys: [[.06, { tr: -20, hd: -25 }], [.3, { tr: -8 }]] });
 
 const SKY = (ctx, a, b) => { const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, a); g.addColorStop(1, b); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); };
 function layer(ctx, f, fn, fy) { ctx.save(); cam.layer(ctx, f, fy); fn(ctx, cam.range(f)); ctx.restore(); }
 function rep(range, sp, fn) { for (let i = Math.floor(range[0] / sp) - 1; i <= Math.ceil(range[1] / sp) + 1; i++) fn(i, i * sp); }
 function jumpOnto(c, p, off, T, top) { const tx = p.x + (p.vx || 0) * T + off, ty = top != null ? top : p.surface(p.x + off); c.dismount(); c.jumpTo(tx, ty, T); }
+// tight, aggressive framing for melee — the camera lives inside the fight
+function fightCam(a, b, o = {}) { cam.follow([a, b], Object.assign({ pad: 85, minZ: 1, maxZ: 3.1, smooth: 3.6, zs: 3, dy: -48 }, o)); }
 function between(a, b) { return { get camX() { return (a.camX + b.camX) / 2; }, get camY() { return (a.camY + b.camY) / 2; } }; }
 class Spinner extends Prop { // a thrown/flying blade
   constructor(o) { super(Object.assign({ z: 11, vy: 0, rot: 0, vr: 14, stuck: false, kind: 'machete', floorY: 0 }, o)); }
@@ -1563,14 +1684,16 @@ SCENES.push({
     tl.at(5.95, () => { red.stop(); blue.stop(); red.play('stagger'); blue.play('stagger'); red.vx = -150; blue.vx = 150; impact(456, -78, 12); SFX.hit(456); cam.shake(.15); });
     tl.at(6.5, () => { red.play('leanIn'); blue.play('leanIn'); cam.to(452, -92, 2.7, 2.4, 1.4); SFX.loopSet('wind', null, .09); });
     tl.at(7.2, () => leaves(250, -200, 3, 60));
-    tl.at(8.1, () => { cam.follow([red, blue], { pad: 200, maxZ: 1.7, smooth: 3, zs: 2.5 }); red.base = blue.base = 'stance'; red.foe = blue; blue.foe = red; SFX.loopSet('wind', null, .04); });
+    tl.at(8.1, () => { fightCam(red, blue); red.base = blue.base = 'stance'; red.foe = blue; blue.foe = red; SFX.loopSet('wind', null, .04); });
     // fistfight
-    tl.at(8.4, () => attack(red, blue, 'jab', 'block'));
-    tl.at(8.75, () => attack(blue, red, 'cross', 'head'));
-    tl.at(9.15, () => attack(red, blue, 'jab', 'head'));
-    tl.at(9.4, () => attack(red, blue, 'cross', 'head'));
-    tl.at(9.75, () => attack(red, blue, 'upper', 'head', { push: 230 }));
-    tl.at(10.3, () => attack(blue, red, 'kick', 'block', { push: 120 }));
+    tl.at(8.25, () => attack(red, blue, 'jab', 'block'));
+    tl.at(8.5, () => attack(red, blue, 'cross', 'head'));
+    tl.at(8.82, () => attack(blue, red, 'elbow', 'head'));
+    tl.at(9.08, () => attack(blue, red, 'kneeUp', 'gut'));
+    tl.at(9.4, () => attack(red, blue, 'upper', 'head', { heavy: true, push: 260 }));
+    tl.at(9.78, () => attack(red, blue, 'kick', 'block', { push: 160 }));
+    tl.at(10.12, () => { blue.play('sweep'); SFX.whoosh(blue.x, .25); });
+    tl.at(10.28, () => { red.play('tuck'); });
     tl.at(10.85, () => { red.foe = null; blue.foe = null; attack(blue, red, 'highKick', 'launch', { heavy: true, vx: 560, vy: -260, spin: -200 }); });
     tl.at(11.25, () => { blue.walkTo(540, 70, 'stance', true); });
     // up, trash can
@@ -1584,13 +1707,15 @@ SCENES.push({
     can.onHitChar = c => { c.knock(380, -380, 620); };
     tl.at(15.9, () => { red.base = 'stance'; red.walkTo(470, 90, 'stance'); });
     tl.at(16.3, () => { blue.getUp(true); });
-    tl.at(17.2, () => { red.foe = blue; blue.foe = red; red.range = blue.range = 56; });
-    tl.at(17.4, () => attack(red, blue, 'jab', 'block'));
-    tl.at(17.75, () => { blue.play('kick'); red.play('dodgeBack'); SFX.whoosh(blue.x, .2); });
+    tl.at(17.0, () => { red.foe = blue; blue.foe = red; red.range = blue.range = 56; fightCam(red, blue); });
+    tl.at(17.2, () => attack(red, blue, 'jab', 'block'));
+    tl.at(17.45, () => attack(red, blue, 'cross', 'head'));
+    tl.at(17.7, () => { blue.play('highKick'); red.play('duck'); SFX.whoosh(blue.x, .25); });
+    tl.at(18.0, () => attack(red, blue, 'upper', 'head', { heavy: true, push: 120 }));
     tl.at(18.3, () => { blue.foe = null; attack(red, blue, 'spinKick', 'launch', { heavy: true, vx: 470, vy: -420, spin: 300 }); });
     tl.during(18.3, 20, () => {
       if (!shop.broken && blue.x > shop.x - 10 && blue.knocked) {
-        shop.smash(blue.vx); blue.ownerDraw = true; shop.inside.push(blue); blue.floor = -40; blue.s = .86; slowmo(.25, .9); blue.vx *= .55;
+        shop.smash(blue.vx); blue.ownerDraw = true; shop.inside.push(blue); blue.floor = -40; blue.s = .86; slowmo(.25, .9); blue.ragScale(.55);
       }
     });
     tl.at(19.0, () => { red.base = 'idle'; red.foe = null; red.play('brush'); cam.follow([red, shop.inside[0] || blue], { pad: 180, maxZ: 1.6, smooth: 2 }); });
@@ -1751,8 +1876,8 @@ SCENES.push({
     tl.during(9.9, 11.3, (p, dt) => { if (!moto.air) { moto.rot = lerp(moto.rot, 0, .2); moto.vx = 800 + clamp((truck.x + 70 - moto.x) * 2.2, -300, 420); } });
     tl.at(10.0, () => cam.follow([moto, truck, blue], { pad: 220, minZ: .6, maxZ: 1, dy: -150, smooth: 3 }));
     // Red jumps from the bike onto the trailer
-    tl.at(11.3, () => { red.ik.N = red.ik.F = null; jumpOnto(red, truck, 100, .55); red.base = 'fall'; SFX.whoosh(red.x, .3); moto.driver = null; moto.air = true; moto.vy = -150; moto.vr = -5; moto.vx = 620; });
-    tl.at(11.9, () => { red.base = 'stance'; red.foe = blue; blue.foe = red; red.range = blue.range = 56; cam.follow([red, blue], { pad: 230, minZ: .8, maxZ: 1.25, dy: -90, smooth: 4 }); SFX.loopSet('engine', 60, .05); });
+    tl.at(11.3, () => { red.ik.N = red.ik.F = null; red.weapon = null; red.hold = null; red.aimAt = null; jumpOnto(red, truck, 100, .55); red.base = 'fall'; SFX.whoosh(red.x, .3); moto.driver = null; moto.air = true; moto.vy = -150; moto.vr = -5; moto.vx = 620; });
+    tl.at(11.9, () => { red.base = 'stance'; red.foe = blue; blue.foe = red; red.range = blue.range = 56; fightCam(red, blue, { maxZ: 2.6 }); SFX.loopSet('engine', 60, .05); });
     // fight on the trailer roof (wind in the scarves)
     tl.at(12.3, () => attack(red, blue, 'jab', 'block'));
     tl.at(12.65, () => attack(blue, red, 'cross', 'head'));
@@ -1761,10 +1886,10 @@ SCENES.push({
     tl.at(14.0, () => { cam.follow([red, blue, gantry], { pad: 160, minZ: .6, maxZ: 1.1, dy: -150, smooth: 3 }); });
     tl.at(14.35, () => { red.play('duck'); blue.play('duck'); });
     tl.at(14.62, () => { SFX.whoosh(gantry.x, .5); cam.shake(.3); });
-    tl.at(15.0, () => cam.follow([red, blue], { pad: 230, minZ: .8, maxZ: 1.25, dy: -90, smooth: 4 }));
+    tl.at(15.0, () => fightCam(red, blue, { maxZ: 2.6 }));
     tl.at(15.1, () => attack(blue, red, 'upper', 'head'));
     tl.at(15.6, () => attack(red, blue, 'cross', 'head', { push: 120 }));
-    tl.at(16.0, () => { red.foe = null; attack(blue, red, 'spinKick', 'launch', { vx: 260, vy: -320, spin: -420 }); });
+    tl.at(16.0, () => { red.foe = null; attack(blue, red, 'spinKick', 'launch', { vx: 90, vy: -380, spin: -420, imp: .25 }); });
     tl.at(16.85, () => { red.getUp(true); });
     tl.at(17.2, () => { red.foe = blue; });
     tl.during(17.2, 18.4, (p) => { truck.rot = Math.sin(p * 30) * .012; });
@@ -1817,7 +1942,7 @@ function fgJungle(ctx) {
     if (h01(i + 11) > .6) { c.beginPath(); c.ellipse(x + 100, 160, 120, 90, 0, 0, TAU); c.fill(); }
   }));
 }
-function knockTo(c, tx, ty, T, spin = 0) { c.knock(0, 0, spin); c.vx = (tx - c.x) / T; c.vy = (ty - c.y - .5 * G * T * T) / T; }
+function knockTo(c, tx, ty, T, spin = 0) { c.knock((tx - c.x) / T, (ty - c.y - .5 * G * T * T) / T, spin); }
 
 // ---------------------------------------------------------------- 4. CRASH + JUNGLE
 SCENES.push({
@@ -1913,7 +2038,7 @@ SCENES.push({
     tl.at(23.1, () => { red.weapon = 'machete'; SFX.slash(red.x); });
     tl.at(23.6, () => { red.play('cutUp', { onHit: () => { trap.cut = true; SFX.snap(trap.ex); red.anchor = null; red.grounded = false; red.vx = 0; red.vy = 0; red.base = 'fall'; red.fallRot = 0; } }); });
     tl.at(24.05, () => { red.play('superLand'); red.hold = 'machete'; cam.follow([red, blue], { pad: 200, maxZ: 1.5, smooth: 3 }); });
-    tl.at(24.6, () => { red.base = blue.base = 'stance'; red.foe = blue; blue.foe = red; red.range = blue.range = 64; });
+    tl.at(24.6, () => { red.base = blue.base = 'stance'; red.foe = blue; blue.foe = red; red.range = blue.range = 64; fightCam(red, blue, { maxZ: 2.8 }); });
     // machete duel, drifting to the waterfall edge
     const duel = [
       [24.9, blue, red, 'overhead', 'clang'], [25.35, red, blue, 'slash', 'clang', { push: 150 }], [25.75, red, blue, 'backslash', 'clang', { push: 170 }],
@@ -2002,7 +2127,7 @@ SCENES.push({
     tl.during(2.25, 11, (p, dt) => { eagle.vy = lerp(eagle.vy, world.t > 0 && eagle.y < 520 ? 0 : -520, .02); eagle.tilt = lerp(eagle.tilt, eagle.vy < -200 ? -.18 : Math.sin(world.t * 1.5) * .05, .05); });
     tl.during(2.3, 9.4, () => { if (Math.random() < .25) FX.add({ t: 'streak', x: cam.x + rnd(-700, 700), y: cam.y + rnd(-300, 300), life: .25, len: -rnd(80, 160), c: 'rgba(30,30,30,.12)', bounce: -1 }); });
     // mid-air fight, one hand each on a talon
-    tl.at(4.0, () => { red.hangOne = blue.hangOne = true; cam.follow([red, blue], { pad: 180, minZ: .8, maxZ: 1.4, smooth: 3, dy: -40 }); });
+    tl.at(4.0, () => { red.hangOne = blue.hangOne = true; fightCam(red, blue, { maxZ: 2.4, dy: -30 }); });
     tl.at(4.4, () => attack(red, blue, 'hangKick', 'gut'));
     tl.at(5.1, () => attack(blue, red, 'hangPunch', 'head'));
     tl.at(5.6, () => attack(blue, red, 'hangKick', 'gut'));
@@ -2072,14 +2197,14 @@ SCENES.push({
     tl.at(6.7, () => { blue.walkTo(770, 80, 'stance'); });
     tl.at(6.95, () => { red.hidden = false; tween(tank, { hatch: 1 }, .15); tween(red, { y: -108 }, .2, Ease.out, () => { red.scripted = false; red.grounded = true; red.base = 'stance'; }); SFX.metal(tank.x, .4); });
     tl.at(7.05, () => { red.face(1); attack(red, blue, 'upper', 'head', { push: 120 }); });
-    tl.at(7.5, () => { red.foe = blue; blue.foe = red; red.range = blue.range = 60; });
+    tl.at(7.5, () => { red.foe = blue; blue.foe = red; red.range = blue.range = 60; fightCam(red, blue, { maxZ: 2.7 }); });
     tl.at(7.7, () => attack(red, blue, 'kick', 'block'));
     tl.at(8.1, () => attack(blue, red, 'jab', 'head'));
     tl.at(8.4, () => attack(blue, red, 'cross', 'head'));
     tl.at(8.8, () => { red.foe = blue.foe = null; attack(blue, red, 'spinKick', 'launch', { heavy: true, vx: 640, vy: -380, spin: 520 }); });
     tl.at(9.0, () => cam.follow([red, blue, crates], { pad: 200, maxZ: 1.2, smooth: 2.5 }));
     tl.at(9.45, () => { blue.jumpTo(560, 0, .55); blue.base = 'fall'; });
-    tl.at(10.0, () => { blue.base = 'stance'; blue.foe = red; });
+    tl.at(10.0, () => { blue.base = 'stance'; blue.foe = red; fightCam(red, blue); });
     tl.at(10.2, () => { red.getUp(); });
     tl.at(11.0, () => { red.foe = blue; attack(red, blue, 'jab', 'block'); });
     tl.at(11.25, () => { SFX.beep(); world.after(.3, () => SFX.beep()); world.after(.6, () => SFX.beep()); red.foe = blue.foe = null; red.face(1); blue.face(1); red.play('lookUp'); blue.play('lookUp'); cam.to(2550, -200, .8, 1.8); });
